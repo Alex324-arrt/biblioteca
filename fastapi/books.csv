@@ -1,0 +1,6 @@
+id;titulo;autor;genero;disponible
+1;The Great Gatsby;F. Scott Fitzgerald;Clásico;True
+2;1984;George Orwell;Distopía;True
+3;Python Crash Course;Eric Matthes;Técnico;True
+4;Clean Code;Robert C. Martin;Técnico;False
+5;The Pragmatic Programmer;Andrew Hunt;Técnico;True
