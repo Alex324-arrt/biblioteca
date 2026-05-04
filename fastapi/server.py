@@ -2,6 +2,7 @@ from fastapi import FastAPI
 import pandas as pd
 import os
 from typing import List
+from datetime import datetime
 from pydantic import BaseModel as PydanticBaseModel
 
 
@@ -52,6 +53,27 @@ class ListadoUsuarios(BaseModel):
 
 
 # -------------------------
+# MODELOS DE PRÉSTAMOS
+# -------------------------
+
+class Prestamo(BaseModel):
+    id: int
+    usuario_id: int
+    libro_id: int
+    fecha_prestamo: str
+    estado: str
+
+
+class NuevoPrestamo(BaseModel):
+    usuario_id: int
+    libro_id: int
+
+
+class ListadoPrestamos(BaseModel):
+    prestamos: List[Prestamo] = []
+
+
+# -------------------------
 # CONFIGURACIÓN GENERAL
 # -------------------------
 
@@ -63,38 +85,49 @@ app = FastAPI(
 
 BOOKS_CSV_PATH = "./books.csv"
 USERS_CSV_PATH = "./users.csv"
+LOANS_CSV_PATH = "./loans.csv"
 
 
 # -------------------------
 # FUNCIONES AUXILIARES
 # -------------------------
 
-def inicializar_archivo_usuarios():
-    """
-    Crea el archivo users.csv si no existe o si está vacío.
-    """
-    if not os.path.exists(USERS_CSV_PATH) or os.path.getsize(USERS_CSV_PATH) == 0:
-        df = pd.DataFrame(columns=["id", "nombre", "email"])
-        df.to_csv(USERS_CSV_PATH, sep=";", index=False)
+def inicializar_csv(path: str, columnas: List[str]):
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        df = pd.DataFrame(columns=columnas)
+        df.to_csv(path, sep=";", index=False)
+
+
+def normalizar_disponible(valor):
+    if isinstance(valor, bool):
+        return valor
+
+    valor_texto = str(valor).strip().lower()
+
+    return valor_texto in ["true", "1", "sí", "si", "yes"]
 
 
 def leer_usuarios():
-    """
-    Lee el archivo users.csv de forma segura.
-    """
-    inicializar_archivo_usuarios()
-
+    inicializar_csv(USERS_CSV_PATH, ["id", "nombre", "email"])
     df = pd.read_csv(USERS_CSV_PATH, sep=";")
-    df = df.fillna("")
-
-    return df
+    return df.fillna("")
 
 
 def guardar_usuarios(df):
-    """
-    Guarda el DataFrame de usuarios en users.csv.
-    """
     df.to_csv(USERS_CSV_PATH, sep=";", index=False)
+
+
+def leer_prestamos():
+    inicializar_csv(
+        LOANS_CSV_PATH,
+        ["id", "usuario_id", "libro_id", "fecha_prestamo", "estado"]
+    )
+    df = pd.read_csv(LOANS_CSV_PATH, sep=";")
+    return df.fillna("")
+
+
+def guardar_prestamos(df):
+    df.to_csv(LOANS_CSV_PATH, sep=";", index=False)
 
 
 # -------------------------
@@ -104,12 +137,16 @@ def guardar_usuarios(df):
 @app.get("/libros/")
 def retrieve_data():
     try:
-        todosmisdatos = pd.read_csv(BOOKS_CSV_PATH, sep=";")
-        todosmisdatos = todosmisdatos.fillna(0)
-        todosmisdatosdict = todosmisdatos.to_dict(orient="records")
+        df = pd.read_csv(BOOKS_CSV_PATH, sep=";")
+        df = df.fillna(0)
+
+        if "disponible" in df.columns:
+            df["disponible"] = df["disponible"].apply(normalizar_disponible)
+
+        libros = df.to_dict(orient="records")
 
         listado = ListadoLibros()
-        listado.libros = todosmisdatosdict
+        listado.libros = libros
 
         return listado
 
@@ -134,7 +171,8 @@ def crear_libro(libro: NuevoLibro):
         if df.empty:
             nuevo_id = 1
         else:
-            nuevo_id = int(df["id"].max()) + 1
+            ids = pd.to_numeric(df["id"], errors="coerce").fillna(0)
+            nuevo_id = int(ids.max()) + 1
 
         nuevo_libro = {
             "id": nuevo_id,
@@ -193,19 +231,12 @@ def crear_usuario(usuario: NuevoUsuario):
         if "@" not in email or "." not in email:
             return {"error": "El email no tiene un formato válido."}
 
-        # Validación correcta de email duplicado
-        if not df.empty and "email" in df.columns:
-            emails_existentes = (
-                df["email"]
-                .astype(str)
-                .str.strip()
-                .str.lower()
-            )
+        if not df.empty:
+            emails_existentes = df["email"].astype(str).str.strip().str.lower()
 
             if emails_existentes.eq(email).any():
                 return {"error": "Ya existe un usuario registrado con ese email."}
 
-        # Calculamos el nuevo ID
         if df.empty:
             nuevo_id = 1
         else:
@@ -231,10 +262,94 @@ def crear_usuario(usuario: NuevoUsuario):
 
 
 # -------------------------
-# ENDPOINT DE PRÉSTAMOS
+# ENDPOINTS DE PRÉSTAMOS
 # -------------------------
 
+@app.get("/prestamos/")
+def listar_prestamos():
+    try:
+        df = leer_prestamos()
+
+        prestamos = df.to_dict(orient="records")
+
+        listado = ListadoPrestamos()
+        listado.prestamos = prestamos
+
+        return listado
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.post("/prestamos/")
-async def create_loan(libro_id: int):
-    # This is a stub for students to implement
-    return {"message": "Préstamo creado (no realmente)", "libro_id": libro_id}
+def crear_prestamo(prestamo: NuevoPrestamo):
+    try:
+        usuarios_df = leer_usuarios()
+        libros_df = pd.read_csv(BOOKS_CSV_PATH, sep=";")
+        libros_df = libros_df.fillna("")
+        prestamos_df = leer_prestamos()
+
+        # Validar que existan usuarios registrados
+        if usuarios_df.empty:
+            return {"error": "No hay usuarios registrados en el sistema."}
+
+        # Validar que exista el usuario
+        usuarios_ids = pd.to_numeric(usuarios_df["id"], errors="coerce").fillna(0)
+
+        if not usuarios_ids.eq(prestamo.usuario_id).any():
+            return {"error": "El usuario indicado no existe."}
+
+        # Validar que existan libros registrados
+        if libros_df.empty:
+            return {"error": "No hay libros registrados en el sistema."}
+
+        # Validar que exista el libro
+        libros_ids = pd.to_numeric(libros_df["id"], errors="coerce").fillna(0)
+        libro_existe = libros_ids.eq(prestamo.libro_id)
+
+        if not libro_existe.any():
+            return {"error": "El libro indicado no existe."}
+
+        indice_libro = libros_df[libro_existe].index[0]
+
+        # Validar que el libro esté disponible
+        disponible = normalizar_disponible(libros_df.loc[indice_libro, "disponible"])
+
+        if not disponible:
+            return {"error": "El libro ya está prestado o no está disponible."}
+
+        # Calcular nuevo ID del préstamo
+        if prestamos_df.empty:
+            nuevo_id = 1
+        else:
+            ids_prestamos = pd.to_numeric(prestamos_df["id"], errors="coerce").fillna(0)
+            nuevo_id = int(ids_prestamos.max()) + 1
+
+        nuevo_prestamo = {
+            "id": nuevo_id,
+            "usuario_id": prestamo.usuario_id,
+            "libro_id": prestamo.libro_id,
+            "fecha_prestamo": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "estado": "activo"
+        }
+
+        # Registrar préstamo
+        prestamos_df = pd.concat(
+            [prestamos_df, pd.DataFrame([nuevo_prestamo])],
+            ignore_index=True
+        )
+
+        # Cambiar disponibilidad del libro
+        libros_df.loc[indice_libro, "disponible"] = False
+
+        # Guardar cambios
+        guardar_prestamos(prestamos_df)
+        libros_df.to_csv(BOOKS_CSV_PATH, sep=";", index=False)
+
+        return {
+            "mensaje": "Préstamo registrado correctamente.",
+            "prestamo": nuevo_prestamo
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
