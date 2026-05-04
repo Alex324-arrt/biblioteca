@@ -130,6 +130,20 @@ def guardar_prestamos(df):
     df.to_csv(LOANS_CSV_PATH, sep=";", index=False)
 
 
+def leer_libros():
+    df = pd.read_csv(BOOKS_CSV_PATH, sep=";")
+    df = df.fillna("")
+
+    if "disponible" in df.columns:
+        df["disponible"] = df["disponible"].apply(normalizar_disponible)
+
+    return df
+
+
+def guardar_libros(df):
+    df.to_csv(BOOKS_CSV_PATH, sep=";", index=False)
+
+
 # -------------------------
 # ENDPOINTS DE LIBROS
 # -------------------------
@@ -137,11 +151,7 @@ def guardar_prestamos(df):
 @app.get("/libros/")
 def retrieve_data():
     try:
-        df = pd.read_csv(BOOKS_CSV_PATH, sep=";")
-        df = df.fillna(0)
-
-        if "disponible" in df.columns:
-            df["disponible"] = df["disponible"].apply(normalizar_disponible)
+        df = leer_libros()
 
         libros = df.to_dict(orient="records")
 
@@ -157,7 +167,7 @@ def retrieve_data():
 @app.post("/libros/")
 def crear_libro(libro: NuevoLibro):
     try:
-        df = pd.read_csv(BOOKS_CSV_PATH, sep=";")
+        df = leer_libros()
 
         if not libro.titulo.strip():
             return {"error": "El título no puede estar vacío."}
@@ -183,7 +193,7 @@ def crear_libro(libro: NuevoLibro):
         }
 
         df = pd.concat([df, pd.DataFrame([nuevo_libro])], ignore_index=True)
-        df.to_csv(BOOKS_CSV_PATH, sep=";", index=False)
+        guardar_libros(df)
 
         return {
             "mensaje": "Libro registrado correctamente.",
@@ -285,25 +295,20 @@ def listar_prestamos():
 def crear_prestamo(prestamo: NuevoPrestamo):
     try:
         usuarios_df = leer_usuarios()
-        libros_df = pd.read_csv(BOOKS_CSV_PATH, sep=";")
-        libros_df = libros_df.fillna("")
+        libros_df = leer_libros()
         prestamos_df = leer_prestamos()
 
-        # Validar que existan usuarios registrados
         if usuarios_df.empty:
             return {"error": "No hay usuarios registrados en el sistema."}
 
-        # Validar que exista el usuario
         usuarios_ids = pd.to_numeric(usuarios_df["id"], errors="coerce").fillna(0)
 
         if not usuarios_ids.eq(prestamo.usuario_id).any():
             return {"error": "El usuario indicado no existe."}
 
-        # Validar que existan libros registrados
         if libros_df.empty:
             return {"error": "No hay libros registrados en el sistema."}
 
-        # Validar que exista el libro
         libros_ids = pd.to_numeric(libros_df["id"], errors="coerce").fillna(0)
         libro_existe = libros_ids.eq(prestamo.libro_id)
 
@@ -312,13 +317,11 @@ def crear_prestamo(prestamo: NuevoPrestamo):
 
         indice_libro = libros_df[libro_existe].index[0]
 
-        # Validar que el libro esté disponible
         disponible = normalizar_disponible(libros_df.loc[indice_libro, "disponible"])
 
         if not disponible:
             return {"error": "El libro ya está prestado o no está disponible."}
 
-        # Calcular nuevo ID del préstamo
         if prestamos_df.empty:
             nuevo_id = 1
         else:
@@ -333,22 +336,85 @@ def crear_prestamo(prestamo: NuevoPrestamo):
             "estado": "activo"
         }
 
-        # Registrar préstamo
         prestamos_df = pd.concat(
             [prestamos_df, pd.DataFrame([nuevo_prestamo])],
             ignore_index=True
         )
 
-        # Cambiar disponibilidad del libro
         libros_df.loc[indice_libro, "disponible"] = False
 
-        # Guardar cambios
         guardar_prestamos(prestamos_df)
-        libros_df.to_csv(BOOKS_CSV_PATH, sep=";", index=False)
+        guardar_libros(libros_df)
 
         return {
             "mensaje": "Préstamo registrado correctamente.",
             "prestamo": nuevo_prestamo
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# -------------------------
+# ENDPOINTS DE DEVOLUCIONES
+# -------------------------
+
+@app.post("/devoluciones/")
+def devolver_libro(prestamo_id: int):
+    try:
+        prestamos_df = leer_prestamos()
+        libros_df = leer_libros()
+
+        if prestamos_df.empty:
+            return {"error": "No hay préstamos registrados en el sistema."}
+
+        prestamos_ids = pd.to_numeric(prestamos_df["id"], errors="coerce").fillna(0)
+        prestamo_existe = prestamos_ids.eq(prestamo_id)
+
+        if not prestamo_existe.any():
+            return {"error": "El préstamo indicado no existe."}
+
+        indice_prestamo = prestamos_df[prestamo_existe].index[0]
+        prestamo = prestamos_df.loc[indice_prestamo]
+
+        estado_actual = str(prestamo["estado"]).strip().lower()
+
+        if estado_actual != "activo":
+            return {"error": "El préstamo ya estaba cerrado. No se puede devolver de nuevo."}
+
+        libro_id = int(prestamo["libro_id"])
+
+        libros_ids = pd.to_numeric(libros_df["id"], errors="coerce").fillna(0)
+        libro_existe = libros_ids.eq(libro_id)
+
+        if not libro_existe.any():
+            return {"error": "El libro asociado al préstamo no existe."}
+
+        indice_libro = libros_df[libro_existe].index[0]
+
+        fecha_devolucion = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        prestamos_df.loc[indice_prestamo, "estado"] = "cerrado"
+        prestamos_df.loc[indice_prestamo, "fecha_devolucion"] = fecha_devolucion
+
+        libros_df.loc[indice_libro, "disponible"] = True
+
+        guardar_prestamos(prestamos_df)
+        guardar_libros(libros_df)
+
+        prestamo_actualizado = prestamos_df.loc[indice_prestamo].to_dict()
+        libro_actualizado = libros_df.loc[indice_libro].to_dict()
+
+        return {
+            "mensaje": "Devolución registrada correctamente.",
+            "prestamo": prestamo_actualizado,
+            "libro": {
+                "id": int(libro_actualizado["id"]),
+                "titulo": libro_actualizado["titulo"],
+                "autor": libro_actualizado["autor"],
+                "genero": libro_actualizado["genero"],
+                "disponible": normalizar_disponible(libro_actualizado["disponible"])
+            }
         }
 
     except Exception as e:
