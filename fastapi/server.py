@@ -154,6 +154,20 @@ def guardar_prestamos(df):
     df.to_csv(LOANS_CSV_PATH, sep=";", index=False)
 
 
+def leer_libros():
+    df = pd.read_csv(BOOKS_CSV_PATH, sep=";")
+    df = df.fillna("")
+
+    if "disponible" in df.columns:
+        df["disponible"] = df["disponible"].apply(normalizar_disponible)
+
+    return df
+
+
+def guardar_libros(df):
+    df.to_csv(BOOKS_CSV_PATH, sep=";", index=False)
+
+
 # -------------------------
 # ENDPOINTS DE LIBROS
 # -------------------------
