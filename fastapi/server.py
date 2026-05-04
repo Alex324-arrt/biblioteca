@@ -103,8 +103,26 @@ def normalizar_disponible(valor):
         return valor
 
     valor_texto = str(valor).strip().lower()
-
     return valor_texto in ["true", "1", "sí", "si", "yes"]
+
+
+def leer_libros():
+    inicializar_csv(
+        BOOKS_CSV_PATH,
+        ["id", "titulo", "autor", "genero", "disponible"]
+    )
+
+    df = pd.read_csv(BOOKS_CSV_PATH, sep=";")
+    df = df.fillna("")
+
+    if "disponible" in df.columns:
+        df["disponible"] = df["disponible"].apply(normalizar_disponible)
+
+    return df
+
+
+def guardar_libros(df):
+    df.to_csv(BOOKS_CSV_PATH, sep=";", index=False)
 
 
 def leer_usuarios():
@@ -120,10 +138,16 @@ def guardar_usuarios(df):
 def leer_prestamos():
     inicializar_csv(
         LOANS_CSV_PATH,
-        ["id", "usuario_id", "libro_id", "fecha_prestamo", "estado"]
+        ["id", "usuario_id", "libro_id", "fecha_prestamo", "estado", "fecha_devolucion"]
     )
+
     df = pd.read_csv(LOANS_CSV_PATH, sep=";")
-    return df.fillna("")
+    df = df.fillna("")
+
+    if "fecha_devolucion" not in df.columns:
+        df["fecha_devolucion"] = ""
+
+    return df
 
 
 def guardar_prestamos(df):
@@ -152,7 +176,6 @@ def guardar_libros(df):
 def retrieve_data():
     try:
         df = leer_libros()
-
         libros = df.to_dict(orient="records")
 
         listado = ListadoLibros()
@@ -212,7 +235,6 @@ def crear_libro(libro: NuevoLibro):
 def listar_usuarios():
     try:
         df = leer_usuarios()
-
         usuarios = df.to_dict(orient="records")
 
         listado = ListadoUsuarios()
@@ -279,7 +301,6 @@ def crear_usuario(usuario: NuevoUsuario):
 def listar_prestamos():
     try:
         df = leer_prestamos()
-
         prestamos = df.to_dict(orient="records")
 
         listado = ListadoPrestamos()
@@ -316,7 +337,6 @@ def crear_prestamo(prestamo: NuevoPrestamo):
             return {"error": "El libro indicado no existe."}
 
         indice_libro = libros_df[libro_existe].index[0]
-
         disponible = normalizar_disponible(libros_df.loc[indice_libro, "disponible"])
 
         if not disponible:
@@ -333,7 +353,8 @@ def crear_prestamo(prestamo: NuevoPrestamo):
             "usuario_id": prestamo.usuario_id,
             "libro_id": prestamo.libro_id,
             "fecha_prestamo": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "estado": "activo"
+            "estado": "activo",
+            "fecha_devolucion": ""
         }
 
         prestamos_df = pd.concat(
@@ -396,7 +417,6 @@ def devolver_libro(prestamo_id: int):
 
         prestamos_df.loc[indice_prestamo, "estado"] = "cerrado"
         prestamos_df.loc[indice_prestamo, "fecha_devolucion"] = fecha_devolucion
-
         libros_df.loc[indice_libro, "disponible"] = True
 
         guardar_prestamos(prestamos_df)
@@ -415,6 +435,85 @@ def devolver_libro(prestamo_id: int):
                 "genero": libro_actualizado["genero"],
                 "disponible": normalizar_disponible(libro_actualizado["disponible"])
             }
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# -------------------------
+# ENDPOINTS DE HISTORIAL
+# -------------------------
+
+@app.get("/usuarios/{usuario_id}/historial-prestamos/")
+def historial_prestamos_usuario(usuario_id: int):
+    try:
+        usuarios_df = leer_usuarios()
+        prestamos_df = leer_prestamos()
+        libros_df = leer_libros()
+
+        if usuarios_df.empty:
+            return {"error": "No hay usuarios registrados en el sistema."}
+
+        usuarios_ids = pd.to_numeric(usuarios_df["id"], errors="coerce").fillna(0)
+        usuario_existe = usuarios_ids.eq(usuario_id)
+
+        if not usuario_existe.any():
+            return {"error": "El usuario indicado no existe."}
+
+        usuario = usuarios_df[usuario_existe].iloc[0].to_dict()
+
+        if prestamos_df.empty:
+            return {
+                "usuario": usuario,
+                "historial": [],
+                "mensaje": "El usuario no tiene historial de préstamos."
+            }
+
+        prestamos_df["usuario_id"] = pd.to_numeric(
+            prestamos_df["usuario_id"],
+            errors="coerce"
+        ).fillna(0).astype(int)
+
+        historial_df = prestamos_df[prestamos_df["usuario_id"] == usuario_id].copy()
+
+        if historial_df.empty:
+            return {
+                "usuario": usuario,
+                "historial": [],
+                "mensaje": "El usuario no tiene historial de préstamos."
+            }
+
+        libros_df["id"] = pd.to_numeric(
+            libros_df["id"],
+            errors="coerce"
+        ).fillna(0).astype(int)
+
+        historial = []
+
+        for _, prestamo in historial_df.iterrows():
+            libro_id = int(prestamo["libro_id"])
+            libro_filtrado = libros_df[libros_df["id"] == libro_id]
+
+            if libro_filtrado.empty:
+                titulo_libro = "Libro no encontrado"
+            else:
+                titulo_libro = libro_filtrado.iloc[0]["titulo"]
+
+            fecha_devolucion = prestamo.get("fecha_devolucion", "")
+
+            historial.append({
+                "prestamo_id": int(prestamo["id"]),
+                "libro_id": libro_id,
+                "titulo_libro": titulo_libro,
+                "fecha_prestamo": prestamo.get("fecha_prestamo", ""),
+                "fecha_devolucion": fecha_devolucion if str(fecha_devolucion).strip() else "Pendiente",
+                "estado": prestamo.get("estado", "")
+            })
+
+        return {
+            "usuario": usuario,
+            "historial": historial
         }
 
     except Exception as e:
