@@ -36,7 +36,7 @@ try:
     if not libros:
         st.info("No hay libros registrados actualmente en el catálogo.")
     else:
-        # Convertimos la lista de libros en un DataFrame para mostrarla como tabla
+        # Convertimos la lista de libros en un DataFrame
         df = pd.DataFrame(libros)
 
         # Convertimos el campo booleano disponible en un texto más claro
@@ -44,22 +44,66 @@ try:
             lambda disponible: "Disponible" if disponible else "Prestado"
         )
 
-        # Seleccionamos solo las columnas necesarias para HU-01
-        df_mostrar = df[["titulo", "autor", "genero", "estado"]].rename(
-            columns={
-                "titulo": "Título",
-                "autor": "Autor",
-                "genero": "Género",
-                "estado": "Estado"
-            }
+        # -------------------------
+        # BUSCADOR HU-07
+        # -------------------------
+
+        st.subheader("🔎 Buscar libros")
+
+        texto_busqueda = st.text_input(
+            "Busca por título o autor",
+            placeholder="Ejemplo: Gatsby, Orwell, Martin..."
         )
 
-        # Mostramos la tabla final sin índice
-        st.dataframe(
-            df_mostrar,
-            use_container_width=True,
-            hide_index=True
+        criterio_busqueda = st.radio(
+            "Filtrar por",
+            ["Título o autor", "Solo título", "Solo autor"],
+            horizontal=True
         )
+
+        df_filtrado = df.copy()
+
+        if texto_busqueda.strip():
+            busqueda = texto_busqueda.strip().lower()
+
+            titulos = df_filtrado["titulo"].astype(str).str.lower()
+            autores = df_filtrado["autor"].astype(str).str.lower()
+
+            if criterio_busqueda == "Solo título":
+                df_filtrado = df_filtrado[titulos.str.contains(busqueda, na=False)]
+
+            elif criterio_busqueda == "Solo autor":
+                df_filtrado = df_filtrado[autores.str.contains(busqueda, na=False)]
+
+            else:
+                df_filtrado = df_filtrado[
+                    titulos.str.contains(busqueda, na=False)
+                    | autores.str.contains(busqueda, na=False)
+                ]
+
+        # -------------------------
+        # TABLA FINAL
+        # -------------------------
+
+        if df_filtrado.empty:
+            st.warning("No se han encontrado libros que coincidan con la búsqueda.")
+        else:
+            st.write(f"Resultados encontrados: **{len(df_filtrado)}**")
+
+            df_mostrar = df_filtrado[["titulo", "autor", "genero", "estado"]].rename(
+                columns={
+                    "titulo": "Título",
+                    "autor": "Autor",
+                    "genero": "Género",
+                    "estado": "Estado"
+                }
+            )
+
+            st.dataframe(
+                df_mostrar,
+                use_container_width=True,
+                hide_index=True
+            )
 
 except requests.exceptions.ConnectionError:
     st.error("No se ha podido conectar con el servidor de libros.")
