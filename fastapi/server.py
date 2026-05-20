@@ -3,12 +3,11 @@ import pandas as pd
 import os
 from typing import List
 from datetime import datetime
-from pydantic import BaseModel as PydanticBaseModel
+from pydantic import BaseModel as PydanticBaseModel, ConfigDict
 
 
 class BaseModel(PydanticBaseModel):
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 # -------------------------
@@ -126,7 +125,11 @@ def guardar_libros(df):
 
 
 def leer_usuarios():
-    inicializar_csv(USERS_CSV_PATH, ["id", "nombre", "email"])
+    inicializar_csv(
+        USERS_CSV_PATH,
+        ["id", "nombre", "email"]
+    )
+
     df = pd.read_csv(USERS_CSV_PATH, sep=";")
     return df.fillna("")
 
@@ -154,20 +157,6 @@ def guardar_prestamos(df):
     df.to_csv(LOANS_CSV_PATH, sep=";", index=False)
 
 
-def leer_libros():
-    df = pd.read_csv(BOOKS_CSV_PATH, sep=";")
-    df = df.fillna("")
-
-    if "disponible" in df.columns:
-        df["disponible"] = df["disponible"].apply(normalizar_disponible)
-
-    return df
-
-
-def guardar_libros(df):
-    df.to_csv(BOOKS_CSV_PATH, sep=";", index=False)
-
-
 # -------------------------
 # ENDPOINTS DE LIBROS
 # -------------------------
@@ -176,12 +165,19 @@ def guardar_libros(df):
 def retrieve_data():
     try:
         df = leer_libros()
-        libros = df.to_dict(orient="records")
 
-        listado = ListadoLibros()
-        listado.libros = libros
+        libros = [
+            Libro(
+                id=int(libro["id"]),
+                titulo=str(libro["titulo"]),
+                autor=str(libro["autor"]),
+                genero=str(libro["genero"]),
+                disponible=normalizar_disponible(libro["disponible"])
+            )
+            for libro in df.to_dict(orient="records")
+        ]
 
-        return listado
+        return ListadoLibros(libros=libros)
 
     except Exception as e:
         return {"error": str(e)}
@@ -235,12 +231,17 @@ def crear_libro(libro: NuevoLibro):
 def listar_usuarios():
     try:
         df = leer_usuarios()
-        usuarios = df.to_dict(orient="records")
 
-        listado = ListadoUsuarios()
-        listado.usuarios = usuarios
+        usuarios = [
+            Usuario(
+                id=int(usuario["id"]),
+                nombre=str(usuario["nombre"]),
+                email=str(usuario["email"])
+            )
+            for usuario in df.to_dict(orient="records")
+        ]
 
-        return listado
+        return ListadoUsuarios(usuarios=usuarios)
 
     except Exception as e:
         return {"error": str(e)}
@@ -301,12 +302,19 @@ def crear_usuario(usuario: NuevoUsuario):
 def listar_prestamos():
     try:
         df = leer_prestamos()
-        prestamos = df.to_dict(orient="records")
 
-        listado = ListadoPrestamos()
-        listado.prestamos = prestamos
+        prestamos = [
+            Prestamo(
+                id=int(prestamo["id"]),
+                usuario_id=int(prestamo["usuario_id"]),
+                libro_id=int(prestamo["libro_id"]),
+                fecha_prestamo=str(prestamo["fecha_prestamo"]),
+                estado=str(prestamo["estado"])
+            )
+            for prestamo in df.to_dict(orient="records")
+        ]
 
-        return listado
+        return ListadoPrestamos(prestamos=prestamos)
 
     except Exception as e:
         return {"error": str(e)}
@@ -430,9 +438,9 @@ def devolver_libro(prestamo_id: int):
             "prestamo": prestamo_actualizado,
             "libro": {
                 "id": int(libro_actualizado["id"]),
-                "titulo": libro_actualizado["titulo"],
-                "autor": libro_actualizado["autor"],
-                "genero": libro_actualizado["genero"],
+                "titulo": str(libro_actualizado["titulo"]),
+                "autor": str(libro_actualizado["autor"]),
+                "genero": str(libro_actualizado["genero"]),
                 "disponible": normalizar_disponible(libro_actualizado["disponible"])
             }
         }
@@ -462,6 +470,11 @@ def historial_prestamos_usuario(usuario_id: int):
             return {"error": "El usuario indicado no existe."}
 
         usuario = usuarios_df[usuario_existe].iloc[0].to_dict()
+        usuario = {
+            "id": int(usuario["id"]),
+            "nombre": str(usuario["nombre"]),
+            "email": str(usuario["email"])
+        }
 
         if prestamos_df.empty:
             return {
@@ -498,7 +511,7 @@ def historial_prestamos_usuario(usuario_id: int):
             if libro_filtrado.empty:
                 titulo_libro = "Libro no encontrado"
             else:
-                titulo_libro = libro_filtrado.iloc[0]["titulo"]
+                titulo_libro = str(libro_filtrado.iloc[0]["titulo"])
 
             fecha_devolucion = prestamo.get("fecha_devolucion", "")
 
@@ -506,9 +519,9 @@ def historial_prestamos_usuario(usuario_id: int):
                 "prestamo_id": int(prestamo["id"]),
                 "libro_id": libro_id,
                 "titulo_libro": titulo_libro,
-                "fecha_prestamo": prestamo.get("fecha_prestamo", ""),
+                "fecha_prestamo": str(prestamo.get("fecha_prestamo", "")),
                 "fecha_devolucion": fecha_devolucion if str(fecha_devolucion).strip() else "Pendiente",
-                "estado": prestamo.get("estado", "")
+                "estado": str(prestamo.get("estado", ""))
             })
 
         return {
