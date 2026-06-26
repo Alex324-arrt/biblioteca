@@ -13,7 +13,8 @@ st.write(
     "Completa el formulario para añadir un nuevo libro al catálogo de la biblioteca."
 )
 
-API_URL = "http://localhost:8000"
+# URL del backend FastAPI dentro de Docker Compose
+API_URL = "http://fastapi:8000"
 
 with st.form("form_registrar_libro"):
     titulo = st.text_input("Título del libro")
